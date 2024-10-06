@@ -64,13 +64,14 @@ class DiscordBot:
         async def fetch_messages():
             if self.channel:
                 try:
-                    messages = []
+                    await self.channel.send(str(datetime.now()))
+                    '''messages = []
                     async for message in self.channel.history(limit=10):
                         timestamp = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
                         msg_content = f"{timestamp} - {message.author}: {message.content}"
                         messages.append(msg_content)
                     
-                    self.save_messages(messages)
+                    self.save_messages(messages)'''
                 except Exception as e:
                     logger.error(f"Error fetching messages: {str(e)}")
 
