@@ -13,17 +13,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Environment variables
-TOKEN = os.environ.get('DISCORD_BOT_TOKEN', '123')  # Default for development
-GUILD_ID = os.environ.get('DISCORD_GUILD_ID', '123')  # Default for development
-CHANNEL_ID = os.environ.get('DISCORD_CHANNEL_ID', '123')  # Default for development
+TOKEN = os.getenv('DISCORD_BOT_TOKEN', st.secrets.get("DISCORD_BOT_TOKEN", "123"))
+GUILD_ID = os.getenv('DISCORD_GUILD_ID', st.secrets.get("DISCORD_GUILD_ID", "123"))
+CHANNEL_ID = os.getenv('DISCORD_CHANNEL_ID', st.secrets.get("DISCORD_CHANNEL_ID", "123"))
 
 # Streamlit configs
 st.set_page_config(page_title="Discord Bot Monitor")
 st.title("Discord Bot Message Monitor")
 
-# Global lock for bot instance
+# Global variables
 bot_lock = threading.Lock()
 bot_instance = None
+stop_event = threading.Event()
 
 class SingletonBot:
     _instance = None
@@ -65,68 +66,65 @@ class SingletonBot:
                 logger.info(f'Connected to guild: {self.guild.name}')
                 logger.info(f'Monitoring channel: {self.channel.name}')
                 
-                st.session_state['bot_status'] = f"""
-                Bot connected as {self.client.user}
-                Guild: {self.guild.name}
-                Channel: {self.channel.name}
-                """
+                if 'bot_status' in st.session_state:
+                    st.session_state['bot_status'] = f"""
+                    Bot connected as {self.client.user}
+                    Guild: {self.guild.name}
+                    Channel: {self.channel.name}
+                    """
                 
                 if not self.is_running:
                     self.fetch_messages.start()
-                    self.check_connection.start()
                     self.is_running = True
             
             except ValueError as e:
-                st.error(str(e))
                 logger.error(str(e))
+                if 'bot_status' in st.session_state:
+                    st.session_state['bot_status'] = f"Error: {str(e)}"
             except Exception as e:
-                st.error(f"An unexpected error occurred during setup: {str(e)}")
                 logger.error(f"An unexpected error occurred during setup: {str(e)}")
+                if 'bot_status' in st.session_state:
+                    st.session_state['bot_status'] = f"Error: {str(e)}"
 
         @tasks.loop(seconds=1)
         async def fetch_messages():
-            if self.channel:
+            if self.channel and not stop_event.is_set():
                 try:
                     await self.channel.send(str(datetime.now()))
-                    '''async for message in self.channel.history(limit=10):
+                    '''new_messages = []
+                    async for message in self.channel.history(limit=10):
                         timestamp = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
                         msg_content = f"{timestamp} - {message.author}: {message.content}"
-                        if msg_content not in self.messages:
-                            self.messages.insert(0, msg_content)
+                        new_messages.append(msg_content)
                     
-                    # Limit the number of stored messages
-                    self.messages = self.messages[:100]
-                    
-                    # Update Streamlit session state
-                    st.session_state['bot_messages'] = self.messages.copy()'''
+                    if 'bot_messages' in st.session_state:
+                        st.session_state['bot_messages'] = new_messages'''
                 
                 except discord.errors.HTTPException as e:
                     logger.error(f"HTTP error occurred while fetching messages: {e}")
-                    await asyncio.sleep(60)  # Simple backoff
+                    await asyncio.sleep(60)
                 except Exception as e:
                     logger.error(f"Error fetching messages: {str(e)}")
-
-        @tasks.loop(minutes=5)
-        async def check_connection():
-            if not self.client.is_ready():
-                logger.warning("Bot disconnected, attempting to reconnect...")
-                await self.start_bot(TOKEN)
         
         self.fetch_messages = fetch_messages
-        self.check_connection = check_connection
 
-    async def start_bot(self, token):
+    async def start_bot(self):
         if not self.is_running:
             try:
-                await self.client.start(token)
+                await self.client.start(TOKEN)
             except discord.LoginFailure:
-                error_msg = "Failed to login. Please check your token."
-                st.error(error_msg)
-                logger.error(error_msg)
+                logger.error("Failed to login. Please check your token.")
+                if 'bot_status' in st.session_state:
+                    st.session_state['bot_status'] = "Failed to login. Please check your token."
             except Exception as e:
-                error_msg = f"An error occurred while starting the bot: {str(e)}"
-                st.error(error_msg)
-                logger.error(error_msg)
+                logger.error(f"An error occurred while starting the bot: {str(e)}")
+                if 'bot_status' in st.session_state:
+                    st.session_state['bot_status'] = f"Error: {str(e)}"
+
+async def run_bot():
+    global bot_instance
+    bot_instance = SingletonBot()
+    await bot_instance.start_bot()
 
 # Initialize session state
 if 'bot_status' not in st.session_state:
@@ -143,31 +141,22 @@ st.sidebar.header("Environment Settings")
 st.sidebar.text(f"Guild ID: {GUILD_ID}")
 st.sidebar.text(f"Channel ID: {CHANNEL_ID}")
 
-def update_display():
-    while True:
-        status_container.write(st.session_state['bot_status'])
-        messages_container.write("\n".join(st.session_state['bot_messages']))
-        time.sleep(1)
+if st.sidebar.button("Start Bot"):
+    stop_event.clear()
+    st.session_state['bot_status'] = "Starting bot..."
+    asyncio.run(run_bot())
 
-# Start bot automatically
-with bot_lock:
-    if bot_instance is None:
-        bot_instance = SingletonBot()
-        
-        # Start the display update thread
-        display_thread = threading.Thread(target=update_display, daemon=True)
-        display_thread.start()
-        
-        # Start the bot
-        st.write("Starting bot...")
-        asyncio.run(bot_instance.start_bot(TOKEN))
-
-def on_shutdown():
+if st.sidebar.button("Stop Bot"):
+    stop_event.set()
+    st.session_state['bot_status'] = "Bot stopped"
     if bot_instance and bot_instance.client:
         asyncio.run(bot_instance.client.close())
 
-st.on_session_end(on_shutdown)
+# Display status and messages
+status_container.write(st.session_state['bot_status'])
+if st.session_state['bot_messages']:
+    messages_container.write("\n".join(st.session_state['bot_messages']))
 
 # Keep the script running
 if __name__ == "__main__":
-    st.write("Bot is running with environment settings.")
+    st.write("Configure settings in the sidebar and click 'Start Bot'")
