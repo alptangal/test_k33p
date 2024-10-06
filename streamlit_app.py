@@ -18,10 +18,11 @@ st.title("Discord Bot Monitor")
 def is_bot_running():
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
-            if BOT_SCRIPT in ' '.join(proc.info['cmdline']):
+            cmdline = proc.info.get('cmdline', [])
+            if cmdline and BOT_SCRIPT in ' '.join(cmdline):
                 return True, proc.info['pid']
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
+            continue
     return False, None
 
 def start_bot():
@@ -31,8 +32,11 @@ def start_bot():
 def stop_bot():
     running, pid = is_bot_running()
     if running and pid:
-        os.kill(pid, signal.SIGTERM)
-        time.sleep(2)  # Give the bot some time to shut down
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(2)  # Give the bot some time to shut down
+        except ProcessLookupError:
+            pass  # Process already terminated
 
 def read_status():
     try:
@@ -58,16 +62,21 @@ def read_messages():
 st.sidebar.header("Bot Controls")
 running, pid = is_bot_running()
 
+if 'bot_started' not in st.session_state:
+    st.session_state.bot_started = False
+
 if running:
     st.sidebar.success(f"Bot is running (PID: {pid})")
     if st.sidebar.button("Stop Bot"):
         stop_bot()
-        st.experimental_rerun()
+        st.session_state.bot_started = False
+        st.rerun()
 else:
     st.sidebar.warning("Bot is not running")
     if st.sidebar.button("Start Bot"):
         start_bot()
-        st.experimental_rerun()
+        st.session_state.bot_started = True
+        st.rerun()
 
 # Display environment settings
 st.sidebar.header("Environment Settings")
@@ -89,12 +98,26 @@ def update_display():
         messages_container.write("No messages yet")
 
 # Auto-refresh
-auto_refresh = st.sidebar.checkbox("Auto-refresh", value=True)
-refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 1, 60, 5)
+if 'auto_refresh' not in st.session_state:
+    st.session_state.auto_refresh = True
 
-if auto_refresh:
-    while True:
-        update_display()
-        time.sleep(refresh_interval)
+st.session_state.auto_refresh = st.sidebar.checkbox(
+    "Auto-refresh", 
+    value=st.session_state.auto_refresh
+)
+
+refresh_interval = st.sidebar.slider(
+    "Refresh interval (seconds)", 
+    1, 60, 5
+)
+
+if st.session_state.auto_refresh:
+    update_display()
+    time.sleep(refresh_interval)
+    st.rerun()
 else:
     update_display()
+
+# Footer
+st.markdown("---")
+st.markdown("Bot logs are saved to 'discord_bot.log'")
