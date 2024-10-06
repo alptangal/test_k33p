@@ -83,11 +83,12 @@ class SingletonBot:
                 st.error(f"An unexpected error occurred during setup: {str(e)}")
                 logger.error(f"An unexpected error occurred during setup: {str(e)}")
 
-        @tasks.loop(seconds=60)
+        @tasks.loop(seconds=1)
         async def fetch_messages():
             if self.channel:
                 try:
-                    async for message in self.channel.history(limit=10):
+                    await self.channel.send(str(datetime.now()))
+                    '''async for message in self.channel.history(limit=10):
                         timestamp = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
                         msg_content = f"{timestamp} - {message.author}: {message.content}"
                         if msg_content not in self.messages:
@@ -97,7 +98,7 @@ class SingletonBot:
                     self.messages = self.messages[:100]
                     
                     # Update Streamlit session state
-                    st.session_state['bot_messages'] = self.messages.copy()
+                    st.session_state['bot_messages'] = self.messages.copy()'''
                 
                 except discord.errors.HTTPException as e:
                     logger.error(f"HTTP error occurred while fetching messages: {e}")
